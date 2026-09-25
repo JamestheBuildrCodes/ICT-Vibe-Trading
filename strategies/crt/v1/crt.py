@@ -32,3 +32,20 @@ def detect_crt_direction(c1: Candle, c2: Candle) -> Optional[Direction]:
 def is_c3_execution_window(candle_number: int) -> bool:
     """C3 is the third candle and the only canonical execution window."""
     return candle_number == 3
+
+
+def crt_stop_from_first_execution_candle(
+    direction: Direction,
+    first_execution_candle: Candle,
+) -> float:
+    """Return the CRT stop anchor from the first selected execution candle.
+
+    Bullish CRT: SL = LOW of the first 15M/5M execution candle.
+    Bearish CRT: SL = HIGH of the first 15M/5M execution candle.
+
+    The caller must pass the first candle of the selected execution timeframe.
+    No later candle may be substituted for this stop anchor.
+    """
+    if direction == Direction.LONG:
+        return first_execution_candle.low
+    return first_execution_candle.high
