@@ -10,6 +10,15 @@
 6. Optionally refine execution with a nested 5M FVG.
 7. Execute only inside C3.
 
+## Stop-loss rule
+
+The stop-loss anchor is determined by the **first candle of the selected execution timeframe**:
+
+- **Bullish trade:** SL = the **LOW of the first 15M/5M execution candle**.
+- **Bearish trade:** SL = the **HIGH of the first 15M/5M execution candle**.
+
+If 15M is the selected execution timeframe, use the first 15M candle. If 5M is selected for the refined execution, use the first 5M candle. Do not move the stop anchor to a later execution candle or the 4H C1/C2 extreme.
+
 ## Explicit exclusions
 
 - 15M displacement is not a mandatory confirmation gate.
