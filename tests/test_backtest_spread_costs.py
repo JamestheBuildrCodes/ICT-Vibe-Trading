@@ -3,7 +3,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from backtest import apply_costs, load_csv_bars, summarize
+from backtest import Bar, apply_costs, load_csv_bars, simulate_exit, summarize
+from crt_strategy import Candle
 
 
 UTC = timezone.utc
@@ -122,3 +123,55 @@ def test_summary_does_not_claim_full_net_r_when_closed_trade_cost_is_missing():
     assert "Closed missing spread costs:  1" in report
     assert "Net R (all closed trades):    UNAVAILABLE" in report
     assert "Net R (known-cost subset):    +0.00R (0 trades)" in report
+
+
+
+def test_exit_simulation_does_not_use_m5_bar_after_test_end():
+    entry_time = datetime(2026, 1, 1, 0, 15, tzinfo=UTC)
+    trade = SimpleNamespace(
+        entry_time=entry_time,
+        direction="LONG",
+        stop_loss=1.0990,
+        take_profit=1.1020,
+        exit_time=None,
+        exit_price=None,
+        exit_reason="OPEN_AT_END",
+        gross_r=None,
+        same_bar_ambiguity=False,
+    )
+    # This bar hits TP, but it starts at the exclusive test cutoff.
+    m5 = [
+        Bar(Candle(entry_time, 1.1000, 1.1030, 1.0995, 1.1025), 0.0001)
+    ]
+
+    result = simulate_exit(trade, m5, test_end=entry_time)
+
+    assert result.exit_time is None
+    assert result.gross_r is None
+    assert result.exit_reason == "OPEN_AT_END"
+
+
+def test_exit_simulation_does_not_use_m5_bar_that_closes_after_test_end():
+    entry_time = datetime(2026, 1, 1, 0, 10, tzinfo=UTC)
+    test_end = datetime(2026, 1, 1, 0, 12, tzinfo=UTC)
+    trade = SimpleNamespace(
+        entry_time=entry_time,
+        direction="LONG",
+        stop_loss=1.0990,
+        take_profit=1.1020,
+        exit_time=None,
+        exit_price=None,
+        exit_reason="OPEN_AT_END",
+        gross_r=None,
+        same_bar_ambiguity=False,
+    )
+    # Candle opened before cutoff but closes at 00:15, beyond test_end.
+    m5 = [
+        Bar(Candle(entry_time, 1.1000, 1.1030, 1.0995, 1.1025), 0.0001)
+    ]
+
+    result = simulate_exit(trade, m5, test_end=test_end)
+
+    assert result.exit_time is None
+    assert result.gross_r is None
+    assert result.exit_reason == "OPEN_AT_END"
