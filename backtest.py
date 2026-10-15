@@ -141,11 +141,11 @@ def load_csv_bars(path: Path) -> list[Bar]:
             f"Ambiguous spread columns in {path}: use either spread_price or "
             "spread_points, not both"
         )
-    if has_ambiguous_spread and not (has_spread_price or has_spread_points):
+    if has_ambiguous_spread:
         raise ValueError(
-            f"Ambiguous 'spread' column in {path}. Rename it to 'spread_price' "
-            "only if values are price differences, or provide 'spread_points' "
-            "and a positive 'point_size' column if values are broker points."
+            f"Ambiguous 'spread' column in {path}. Remove it and use only "
+            "'spread_price' for price differences, or 'spread_points' with a "
+            "positive 'point_size' column for broker points."
         )
 
     bars: list[Bar] = []
