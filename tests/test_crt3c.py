@@ -75,7 +75,7 @@ def test_signal_uses_completed_m15_reaction_not_m5():
     setup = detect_crt3c(h4[0], h4[1], base + timedelta(hours=8))
     assert setup is not None
     m15 = make_parent_m15(base) + [
-        c(base + timedelta(hours=8), 1.1060, 1.1070, 1.1040, 1.1045),
+        c(base + timedelta(hours=8), 1.1060, 1.1070, 1.1040, 1.1060),
     ]
     # M5 cannot create an entry; only the completed M15 reaction may do so.
     m5 = [c(base + timedelta(hours=8, minutes=5), 1.1048, 1.1050, 1.1043, 1.1046)]
@@ -132,7 +132,7 @@ def test_m5_refinement_cannot_change_m15_entry():
     setup = detect_crt3c(h4[0], h4[1], base + timedelta(hours=8))
     assert setup is not None
     m15 = make_parent_m15(base) + [
-        c(base + timedelta(hours=8), 1.1060, 1.1070, 1.1040, 1.1045),
+        c(base + timedelta(hours=8), 1.1060, 1.1070, 1.1040, 1.1060),
     ]
     # An available nested M5 FVG must not alter the M15 entry or stop.
     m5 = [
