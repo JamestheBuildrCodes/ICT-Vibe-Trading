@@ -339,11 +339,26 @@ def apply_costs(
     if trade.gross_r is None:
         return
 
-    entry_spread = spread_by_time.get(trade.entry_time, 0.0)
-    exit_spread = spread_by_time.get(
-        trade.exit_time if trade.exit_time else trade.entry_time,
-        0.0,
+    # Spread samples are timestamped at M5 candle open. Entry occurs just
+    # after a completed M15 candle, aligned to an M5 open. Exit times are
+    # stored as candle-close times, so map back to the triggering M5 open.
+    entry_spread = spread_by_time.get(trade.entry_time)
+    exit_bar_time = (
+        trade.exit_time - timedelta(minutes=M5_MINUTES)
+        if trade.exit_time is not None
+        else None
     )
+    exit_spread = spread_by_time.get(exit_bar_time) if exit_bar_time else None
+
+    # Do not silently turn missing spread observations into free execution.
+    if entry_spread is None or exit_spread is None:
+        trade.spread_cost_r = None
+        trade.commission_r = commission_r
+        trade.slippage_r = slippage_r
+        trade.total_cost_r = None
+        trade.net_r = None
+        return
+
     avg_spread = max(0.0, (entry_spread + exit_spread) / 2.0)
     trade.spread_cost_r = avg_spread / trade.risk_distance if trade.risk_distance > 0 else 0.0
     trade.commission_r = commission_r
@@ -370,7 +385,7 @@ def run_symbol_backtest(
     test_end: datetime,
     commission_r: float,
     slippage_r: float,
-    allow_5m_refinement: bool = True,
+    allow_5m_refinement: bool = False,
 ) -> tuple[list[Trade], Counter]:
     # Historical bars are fixed during a backtest. Immutable tuples allow
     # the strategy engine to safely reuse their candle fingerprints.
@@ -415,7 +430,7 @@ def run_symbol_backtest(
             m5_candles,
             evaluation_end=min(test_end, c3_end),
 
-            allow_5m_refinement=allow_5m_refinement,
+            allow_5m_refinement=False,
             rr=FIXED_RR,
         )
         if signal is None:
