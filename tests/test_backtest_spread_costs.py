@@ -2,8 +2,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from backtest import Bar, apply_costs, load_csv_bars
-from crt_strategy import Candle
+from backtest import apply_costs, load_csv_bars
 
 
 UTC = timezone.utc
@@ -25,7 +24,7 @@ def test_csv_without_spread_column_marks_spread_unavailable(tmp_path: Path):
 
 def test_missing_spread_does_not_become_zero_transaction_cost():
     entry_time = datetime(2026, 1, 1, 0, 15, tzinfo=UTC)
-    exit_time = entry_time + timedelta(minutes=5)
+    exit_time = entry_time + timedelta(minutes=10)
     trade = SimpleNamespace(
         gross_r=2.0,
         entry_time=entry_time,
@@ -40,7 +39,7 @@ def test_missing_spread_does_not_become_zero_transaction_cost():
 
     apply_costs(
         trade,
-        {entry_time: None, exit_time - timedelta(minutes=5): 0.0002},
+        {entry_time: None, entry_time + timedelta(minutes=5): 0.0002},
         commission_r=0.0,
         slippage_r=0.0,
     )
@@ -67,7 +66,7 @@ def test_explicit_zero_spread_is_not_treated_as_missing():
 
     apply_costs(
         trade,
-        {entry_time: 0.0, exit_time - timedelta(minutes=5): 0.0},
+        {entry_time: 0.0, entry_time + timedelta(minutes=5): 0.0},
         commission_r=0.0,
         slippage_r=0.0,
     )
