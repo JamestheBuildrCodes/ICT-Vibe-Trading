@@ -130,7 +130,23 @@ def _column(row: dict[str, str], *names: str) -> Optional[str]:
 def load_csv_bars(path: Path) -> list[Bar]:
     with path.open("r", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
+        headers = {name.lower().strip() for name in (reader.fieldnames or [])}
         rows = list(reader)
+
+    has_spread_price = "spread_price" in headers
+    has_spread_points = "spread_points" in headers
+    has_ambiguous_spread = "spread" in headers
+    if has_spread_price and has_spread_points:
+        raise ValueError(
+            f"Ambiguous spread columns in {path}: use either spread_price or "
+            "spread_points, not both"
+        )
+    if has_ambiguous_spread and not (has_spread_price or has_spread_points):
+        raise ValueError(
+            f"Ambiguous 'spread' column in {path}. Rename it to 'spread_price' "
+            "only if values are price differences, or provide 'spread_points' "
+            "and a positive 'point_size' column if values are broker points."
+        )
 
     bars: list[Bar] = []
     for row in rows:
@@ -142,9 +158,34 @@ def load_csv_bars(path: Path) -> list[Bar]:
         if None in (ts, op, hi, lo, cl):
             raise ValueError(f"Missing required OHLC columns in {path}")
 
-        spread_raw = _column(row, "spread_price", "spread")
-        spread_price = float(spread_raw) if spread_raw not in (None, "") else None
-        if spread_price is not None and (not math.isfinite(spread_price) or spread_price < 0):
+        spread_price = None
+        if has_spread_price:
+            spread_raw = _column(row, "spread_price")
+            spread_price = float(spread_raw) if spread_raw not in (None, "") else None
+        elif has_spread_points:
+            points_raw = _column(row, "spread_points")
+            point_size_raw = _column(row, "point_size", "symbol_point")
+            if points_raw not in (None, ""):
+                if point_size_raw in (None, ""):
+                    raise ValueError(
+                        f"'spread_points' requires a positive 'point_size' or "
+                        f"'symbol_point' column in {path}"
+                    )
+                points = float(points_raw)
+                point_size = float(point_size_raw)
+                if (
+                    not math.isfinite(points) or points < 0
+                    or not math.isfinite(point_size) or point_size <= 0
+                ):
+                    raise ValueError(
+                        f"Invalid spread_points/point_size in {path}: "
+                        f"{points!r}/{point_size!r}"
+                    )
+                spread_price = points * point_size
+
+        if spread_price is not None and (
+            not math.isfinite(spread_price) or spread_price < 0
+        ):
             raise ValueError(f"Invalid spread value in {path}: {spread_price!r}")
         candle = Candle(
             time=parse_datetime(ts),
@@ -517,16 +558,26 @@ def summarize(trades: list[Trade], rejection: Counter) -> str:
     losses = [t for t in closed if t.gross_r < 0]
 
     gross_values = [t.gross_r for t in closed]
-    net_values = [t.net_r for t in closed if t.net_r is not None]
+    cost_known = [t for t in closed if t.net_r is not None]
+    cost_missing_count = len(closed) - len(cost_known)
+    net_values = [t.net_r for t in cost_known]
     gross_win = sum(v for v in gross_values if v > 0)
     gross_loss = abs(sum(v for v in gross_values if v < 0))
     net_win = sum(v for v in net_values if v > 0)
     net_loss = abs(sum(v for v in net_values if v < 0))
 
     gross_pf = gross_win / gross_loss if gross_loss else math.inf
-    net_pf = net_win / net_loss if net_loss else math.inf
+    net_pf_known_subset = net_win / net_loss if net_loss else math.inf
     gross_r = sum(gross_values)
-    net_r = sum(net_values)
+    net_r_known_subset = sum(net_values)
+    net_r_all_trades = (
+        f"{net_r_known_subset:+.2f}R"
+        if cost_missing_count == 0
+        else f"UNAVAILABLE ({cost_missing_count} closed trade(s) missing spread cost)"
+    )
+    spread_cost_known = sum(t.spread_cost_r for t in cost_known)
+    commission_cost_known = sum(t.commission_r or 0.0 for t in cost_known)
+    slippage_cost_known = sum(t.slippage_r or 0.0 for t in cost_known)
 
     lines = [
         "CRT HUNTER - CRT-3C-v1.0 BACKTEST",
@@ -534,21 +585,24 @@ def summarize(trades: list[Trade], rejection: Counter) -> str:
         "",
         f"Total entered trades:        {len(trades)}",
         f"Closed with known outcome:    {len(closed)}",
+        f"Closed with known costs:      {len(cost_known)}",
+        f"Closed missing spread costs:  {cost_missing_count}",
         f"Ambiguous same-bar:           {len(ambiguous)}",
         f"Open at end:                  {len(open_at_end)}",
         f"Wins:                         {len(wins)}",
         f"Losses:                       {len(losses)}",
         f"Win rate (known outcomes):    {len(wins) / len(closed) * 100:.2f}%" if closed else "Win rate (known outcomes):    0.00%",
         "",
-        f"Gross R:                      {gross_r:+.2f}R",
-        f"Spread cost R:                {-sum((t.spread_cost_r or 0.0) for t in closed):+.2f}R",
-        f"Commission R:                 {-sum((t.commission_r or 0.0) for t in closed):+.2f}R",
-        f"Slippage R:                   {-sum((t.slippage_r or 0.0) for t in closed):+.2f}R",
-        f"Net R:                        {net_r:+.2f}R",
+        f"Gross R (all known outcomes): {gross_r:+.2f}R",
+        f"Spread cost R (known costs): {-spread_cost_known:+.2f}R",
+        f"Commission R (known costs):  {-commission_cost_known:+.2f}R",
+        f"Slippage R (known costs):    {-slippage_cost_known:+.2f}R",
+        f"Net R (all closed trades):    {net_r_all_trades}",
+        f"Net R (known-cost subset):    {net_r_known_subset:+.2f}R ({len(cost_known)} trades)",
         f"Gross profit factor:          {gross_pf:.3f}",
-        f"Net profit factor:            {net_pf:.3f}",
+        f"Net PF (known-cost subset):   {net_pf_known_subset:.3f}",
         f"Gross max drawdown:            {calculate_drawdown(gross_values):.2f}R",
-        f"Net max drawdown:              {calculate_drawdown(net_values):.2f}R",
+        f"Net DD (known-cost subset):    {calculate_drawdown(net_values):.2f}R",
         "",
         "FIXED-R INVARIANTS",
         f"TP gross outcomes at +{FIXED_RR:.1f}R: {sum(1 for t in closed if t.exit_reason == 'TP')}",
