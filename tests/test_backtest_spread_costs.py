@@ -1,8 +1,9 @@
+from collections import Counter
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from backtest import apply_costs, load_csv_bars
+from backtest import apply_costs, load_csv_bars, summarize
 
 
 UTC = timezone.utc
@@ -74,3 +75,50 @@ def test_explicit_zero_spread_is_not_treated_as_missing():
     assert trade.spread_cost_r == 0.0
     assert trade.total_cost_r == 0.0
     assert trade.net_r == 2.0
+
+
+
+def test_generic_spread_column_is_rejected_as_unit_ambiguous(tmp_path: Path):
+    path = tmp_path / "EURUSD_M5.csv"
+    path.write_text(
+        "timestamp,open,high,low,close,spread\n"
+        "2026-01-01T00:00:00Z,1.1000,1.1010,1.0990,1.1005,15\n",
+        encoding="utf-8",
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Ambiguous 'spread' column"):
+        load_csv_bars(path)
+
+
+def test_spread_points_are_converted_using_explicit_point_size(tmp_path: Path):
+    path = tmp_path / "EURUSD_M5.csv"
+    path.write_text(
+        "timestamp,open,high,low,close,spread_points,point_size\n"
+        "2026-01-01T00:00:00Z,1.1000,1.1010,1.0990,1.1005,15,0.00001\n",
+        encoding="utf-8",
+    )
+
+    bars = load_csv_bars(path)
+
+    assert bars[0].spread_price == 0.00015
+
+
+def test_summary_does_not_claim_full_net_r_when_closed_trade_cost_is_missing():
+    trade = SimpleNamespace(
+        gross_r=2.0,
+        net_r=None,
+        spread_cost_r=None,
+        commission_r=0.0,
+        slippage_r=0.0,
+        exit_time=datetime(2026, 1, 1, 1, tzinfo=UTC),
+        same_bar_ambiguity=False,
+        exit_reason="TP",
+    )
+
+    report = summarize([trade], Counter())
+
+    assert "Closed missing spread costs:  1" in report
+    assert "Net R (all closed trades):    UNAVAILABLE" in report
+    assert "Net R (known-cost subset):    +0.00R (0 trades)" in report
