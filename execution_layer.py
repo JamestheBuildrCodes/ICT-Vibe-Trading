@@ -329,7 +329,7 @@ def run_once(session_window=None):
             m5_closed=m5,
             current_time=tick_time,
             current_price=probe_price,
-            allow_5m_refinement=True,
+            allow_5m_refinement=False,
             rr=2.0,
         )
         if signal is None:

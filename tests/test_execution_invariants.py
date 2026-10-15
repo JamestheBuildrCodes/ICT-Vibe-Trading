@@ -57,7 +57,12 @@ def test_costs_are_separate_from_gross_r():
     t.exit_reason = "TP"
     t.exit_time = datetime(2026, 1, 1, 9, tzinfo=UTC)
     t.gross_r = 2.0
-    spreads = {t.reaction_time: 0.00010, datetime(2026, 1, 1, 8, 55, tzinfo=UTC): 0.00010}
+    # Entry is 08:35 M5 open; exit_time is 09:00 close, so the exit
+    # spread comes from the triggering 08:55 M5 candle.
+    spreads = {
+        datetime(2026, 1, 1, 8, 35, tzinfo=UTC): 0.00010,
+        datetime(2026, 1, 1, 8, 55, tzinfo=UTC): 0.00010,
+    }
     apply_costs(t, spreads, commission_r=0.05, slippage_r=0.02)
     assert t.gross_r == 2.0
     assert t.net_r == 2.0 - t.total_cost_r

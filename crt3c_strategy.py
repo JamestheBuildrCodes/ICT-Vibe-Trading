@@ -625,7 +625,7 @@ def _make_signal(
         else entry_price - risk * rr
     )
 
-    entry_time = candle_close_time(reaction_candle, M5_MINUTES)
+    entry_time = candle_close_time(reaction_candle, M15_MINUTES)
     session = current_session(to_ny_time(entry_time))
 
     if session not in ALLOWED_SESSIONS:
@@ -641,7 +641,7 @@ def _make_signal(
         entry_price=entry_price,
         stop_loss=stop_loss,
         take_profit=target,
-        source_timeframe="M5" if nested_fvg is not None else "M15",
+        source_timeframe="M15",
         stop_source="EXECUTION_FVG_CANDLE3_EXTREME",
         execution_fvg=execution_fvg,
         parent_15m_fvg=parent_fvg,
@@ -650,11 +650,7 @@ def _make_signal(
         reason=(
             "CRT-3C-v1.0 | valid 4H C1/C2 | pre-existing aligned 15M FVG "
             "reacted during C3 | "
-            + (
-                "5M nested refinement"
-                if nested_fvg is not None
-                else "direct 15M execution"
-            )
+            "direct 15M execution only"
         ),
     )
 
@@ -664,10 +660,14 @@ def find_crt3c_signal_in_c3(
     m15_candles: Sequence[Candle],
     m5_candles: Sequence[Candle],
     evaluation_end: Optional[datetime] = None,
-    allow_5m_refinement: bool = True,
+    allow_5m_refinement: bool = False,
     rr: float = FIXED_RR,
 ) -> Optional[CRT3CSignal]:
-    """Find the first valid, confirmed execution inside C3."""
+    """Find the first confirmed M15 execution inside C3.
+
+    M5 candles are deliberately excluded from entry detection and refinement.
+    The M5 history is retained in the signature for backward compatibility.
+    """
     _assert_aware(setup.c3_start)
     _assert_aware(setup.c3_end)
 
@@ -684,12 +684,12 @@ def find_crt3c_signal_in_c3(
     if not parents:
         return None
 
-    ordered_m5 = _sorted_candles(m5_candles)
+    ordered_m15 = _sorted_candles(m15_candles)
     previous: Optional[Candle] = None
     active_parents = list(parents)
 
-    for candle in ordered_m5:
-        close_time = candle_close_time(candle, M5_MINUTES)
+    for candle in ordered_m15:
+        close_time = candle_close_time(candle, M15_MINUTES)
 
         if close_time <= setup.c3_start:
             previous = candle
@@ -720,18 +720,11 @@ def find_crt3c_signal_in_c3(
             if parent_entry is None:
                 continue
 
+            # M15 is the sole entry timeframe. No M5 refinement is allowed.
             nested = None
             execution = parent
 
-            if allow_5m_refinement:
-                nested, _nested_entry = _nested_5m_refinement(
-                    parent, ordered_m5, candle, setup.direction
-                )
-                if nested is not None:
-                    execution = nested
-
-            # Entry is the reaction candle's completed close, not an
-            # assumed intrabar fill at the FVG boundary.
+            # Entry is the completed M15 reaction candle's close.
             entry = candle.close
             stop = _fvg_candle3_stop(execution, setup.direction)
 
@@ -763,104 +756,43 @@ def find_live_crt3c_signal(
     m5_closed: Sequence[Candle],
     current_time: datetime,
     current_price: float,
-    allow_5m_refinement: bool = True,
+    allow_5m_refinement: bool = False,
     rr: float = FIXED_RR,
 ) -> Optional[CRT3CSignal]:
-    """Evaluate live/demo conditions from closed candles and a current quote."""
-    _assert_aware(current_time)
+    """Emit a signal only on the close of a confirming M15 reaction candle.
 
-    if len(h4_closed) < 2 or current_price <= 0:
+    M5 history and the current quote remain in the signature for compatibility,
+    but neither can trigger or refine an entry.
+    """
+    _assert_aware(current_time)
+    if len(h4_closed) < 2 or not m15_closed:
         return None
 
     ordered_h4 = _sorted_candles(h4_closed)
+    ordered_m15 = _sorted_candles(m15_closed)
     c1, c2 = ordered_h4[-2], ordered_h4[-1]
-
     c3_start = candle_close_time(c2, H4_MINUTES)
     c3_end = c3_start + timedelta(minutes=H4_MINUTES)
-
-    if not (
-        _utc_datetime(c3_start)
-        <= _utc_datetime(current_time)
-        < _utc_datetime(c3_end)
-    ):
+    now = _utc_datetime(current_time)
+    if not (_utc_datetime(c3_start) <= now < _utc_datetime(c3_end)):
         return None
 
     setup = detect_crt3c(c1, c2, c3_start)
     if setup is None:
         return None
 
-    session = current_session(to_ny_time(current_time))
-    if session not in ALLOWED_SESSIONS:
+    latest_close = candle_close_time(ordered_m15[-1], M15_MINUTES)
+    if _utc_datetime(latest_close) > now or _utc_datetime(latest_close) >= _utc_datetime(c3_end):
         return None
 
-    parents = preexisting_valid_fvgs(
-        m15_closed,
-        setup.direction,
-        c3_start,
-        M15_MINUTES,
+    signal = find_crt3c_signal_in_c3(
+        setup=setup,
+        m15_candles=ordered_m15,
+        m5_candles=(),
+        evaluation_end=latest_close,
+        allow_5m_refinement=False,
+        rr=rr,
     )
-
-    parent = next(
-        (
-            fvg
-            for fvg in parents
-            if fvg.lower <= current_price <= fvg.upper
-            and fvg_valid_through_time(fvg, m15_closed, current_time)
-        ),
-        None,
-    )
-
-    if parent is None:
+    if signal is None or _utc_datetime(signal.entry_time) != _utc_datetime(latest_close):
         return None
-
-    execution = parent
-    nested = None
-
-    if allow_5m_refinement:
-        nested = _find_live_nested_fvg(
-            parent_15m=parent,
-            m5_candles=m5_closed,
-            direction=setup.direction,
-            current_time=current_time,
-            current_price=current_price,
-        )
-        if nested is not None:
-            execution = nested
-
-    stop = _fvg_candle3_stop(execution, setup.direction)
-    if not _valid_r_geometry(setup.direction, current_price, stop, rr):
-        return None
-
-    risk = abs(current_price - stop)
-    target = (
-        current_price + risk * rr
-        if setup.direction == Direction.LONG
-        else current_price - risk * rr
-    )
-
-    return CRT3CSignal(
-        setup_id=setup.setup_id,
-        direction=setup.direction,
-        c3_start=setup.c3_start,
-        c3_end=setup.c3_end,
-        reaction_time=current_time,
-        entry_time=current_time,
-        entry_price=current_price,
-        stop_loss=stop,
-        take_profit=target,
-        source_timeframe="M5" if nested is not None else "M15",
-        stop_source="EXECUTION_FVG_CANDLE3_EXTREME",
-        execution_fvg=execution,
-        parent_15m_fvg=parent,
-        nested_5m_fvg=nested,
-        session=session,
-        reason=(
-            "CRT-3C-v1.0 | live/demo | pre-existing aligned 15M FVG "
-            "reacted in C3 | "
-            + (
-                "5M nested refinement"
-                if nested is not None
-                else "direct 15M execution"
-            )
-        ),
-    )
+    return signal

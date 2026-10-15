@@ -66,7 +66,7 @@ def test_preexisting_fvg_is_required():
     assert all(f.formed_at < c3_start for f in fvgs)
 
 
-def test_signal_uses_15m_when_no_nested_5m_refinement():
+def test_signal_uses_completed_m15_reaction_not_m5():
     base = datetime(2026, 1, 1, 0, tzinfo=UTC)
     h4 = [
         c(base, 1.1050, 1.1100, 1.1000, 1.1060),
@@ -74,22 +74,18 @@ def test_signal_uses_15m_when_no_nested_5m_refinement():
     ]
     setup = detect_crt3c(h4[0], h4[1], base + timedelta(hours=8))
     assert setup is not None
-
-    m15 = make_parent_m15(base)
-    # Put a M5 candle during C3 that approaches the bullish FVG from above.
-    # Parent FVG is roughly 1.103-1.105 in this synthetic set.
-    m5_start = base + timedelta(hours=8, minutes=5)
-    m5 = [
-        c(m5_start - timedelta(minutes=5), 1.1070, 1.1080, 1.1040, 1.1070),
-        c(m5_start, 1.1070, 1.1075, 1.1045, 1.1060),
+    m15 = make_parent_m15(base) + [
+        c(base + timedelta(hours=8), 1.1060, 1.1070, 1.1040, 1.1060),
     ]
+    # M5 cannot create an entry; only the completed M15 reaction may do so.
+    m5 = [c(base + timedelta(hours=8, minutes=5), 1.1048, 1.1050, 1.1043, 1.1046)]
     signal = find_crt3c_signal_in_c3(setup, m15, m5)
     assert signal is not None
     assert signal.nested_5m_fvg is None
-    assert signal.source_timeframe == 'M15'
-    assert signal.stop_source == 'EXECUTION_FVG_CANDLE3_EXTREME'
+    assert signal.source_timeframe == "M15"
+    assert signal.entry_time == base + timedelta(hours=8, minutes=15)
+    assert signal.stop_source == "EXECUTION_FVG_CANDLE3_EXTREME"
     assert signal.stop_loss == signal.parent_15m_fvg.third_candle.low
-
 
 def test_opposite_fvg_does_not_satisfy_direction():
     t0 = datetime(2026, 1, 1, 0, tzinfo=UTC)
@@ -127,7 +123,7 @@ def test_fvg_formed_at_c3_start_is_not_preexisting():
     assert all(f.formed_at < c3_start for f in fvgs)
 
 
-def test_5m_refinement_is_used_when_available():
+def test_m5_refinement_cannot_change_m15_entry():
     base = datetime(2026, 1, 1, 0, tzinfo=UTC)
     h4 = [
         c(base, 1.1050, 1.1100, 1.1000, 1.1060),
@@ -135,43 +131,18 @@ def test_5m_refinement_is_used_when_available():
     ]
     setup = detect_crt3c(h4[0], h4[1], base + timedelta(hours=8))
     assert setup is not None
-
-    m15 = make_parent_m15(base)
-
-    # C3 starts at 08:00. The nested 5M FVG is fully formed BEFORE C3.
-    # 07:40 / 07:45 / 07:50 create a bullish 5M FVG:
-    # first.high  = 1.1042
-    # third.low   = 1.1044
-    # therefore FVG = 1.1042 -> 1.1044, entirely inside the parent
-    # 15M FVG = 1.1030 -> 1.1050.
-    reaction = base + timedelta(hours=8, minutes=5)
+    m15 = make_parent_m15(base) + [
+        c(base + timedelta(hours=8), 1.1060, 1.1070, 1.1040, 1.1060),
+    ]
+    # An available nested M5 FVG must not alter the M15 entry or stop.
     m5 = [
         c(base + timedelta(hours=7, minutes=40), 1.1040, 1.1042, 1.1038, 1.1040),
         c(base + timedelta(hours=7, minutes=45), 1.1040, 1.1048, 1.1039, 1.1046),
         c(base + timedelta(hours=7, minutes=50), 1.1046, 1.1050, 1.1044, 1.1048),
-        # First C3 candle: remains above the parent FVG and therefore is not
-        # an earlier reaction candidate.
-        c(base + timedelta(hours=8), 1.1060, 1.1070, 1.1055, 1.1062),
-        # Intended reaction: approaches the nested 5M FVG from above.
-        c(reaction, 1.1048, 1.1050, 1.1043, 1.1046),
     ]
-
-    signal = find_crt3c_signal_in_c3(
-        setup,
-        m15,
-        m5,
-
-    )
-
+    signal = find_crt3c_signal_in_c3(setup, m15, m5, allow_5m_refinement=True)
     assert signal is not None
-    assert signal.parent_15m_fvg is not None
-    assert signal.nested_5m_fvg is not None
-    assert signal.source_timeframe == 'M5'
-    assert signal.stop_source == 'EXECUTION_FVG_CANDLE3_EXTREME'
-    assert signal.stop_loss == signal.nested_5m_fvg.third_candle.low
-    assert signal.stop_loss < signal.entry_price
-    assert abs((signal.take_profit - signal.entry_price) - FIXED_RR * signal.risk_distance) < 1e-12
-
-
-
-
+    assert signal.nested_5m_fvg is None
+    assert signal.source_timeframe == "M15"
+    assert signal.entry_time == base + timedelta(hours=8, minutes=15)
+    assert signal.stop_loss == signal.parent_15m_fvg.third_candle.low
