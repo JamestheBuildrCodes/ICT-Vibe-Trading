@@ -53,7 +53,8 @@ TIMEFRAME_MINUTES = {"M5": 5, "M15": 15, "H4": 240}
 @dataclass(frozen=True)
 class Bar:
     candle: Candle
-    spread_price: float = 0.0
+    # None means the source did not provide a usable spread observation.
+    spread_price: Optional[float] = None
 
 
 @dataclass
@@ -142,7 +143,9 @@ def load_csv_bars(path: Path) -> list[Bar]:
             raise ValueError(f"Missing required OHLC columns in {path}")
 
         spread_raw = _column(row, "spread_price", "spread")
-        spread_price = float(spread_raw) if spread_raw not in (None, "") else 0.0
+        spread_price = float(spread_raw) if spread_raw not in (None, "") else None
+        if spread_price is not None and (not math.isfinite(spread_price) or spread_price < 0):
+            raise ValueError(f"Invalid spread value in {path}: {spread_price!r}")
         candle = Candle(
             time=parse_datetime(ts),
             open=float(op),
@@ -243,7 +246,7 @@ def mt5_load_bundle(
                     float(r["open"]), float(r["high"]),
                     float(r["low"]), float(r["close"]),
                 ),
-                float(r["spread"]) * point if point else 0.0,
+                float(r["spread"]) * point if point > 0 else None,
             ))
         out.sort(key=lambda b: b.candle.time)
         validate_bars(Path(f"MT5:{symbol}:{minutes}"), [b.candle for b in out])
@@ -332,7 +335,7 @@ def simulate_exit(trade: Trade, m5: list[Bar]) -> Trade:
 
 def apply_costs(
     trade: Trade,
-    spread_by_time: dict[datetime, float],
+    spread_by_time: dict[datetime, Optional[float]],
     commission_r: float,
     slippage_r: float,
 ) -> None:
@@ -351,7 +354,14 @@ def apply_costs(
     exit_spread = spread_by_time.get(exit_bar_time) if exit_bar_time else None
 
     # Do not silently turn missing spread observations into free execution.
-    if entry_spread is None or exit_spread is None:
+    if (
+        entry_spread is None
+        or exit_spread is None
+        or not math.isfinite(entry_spread)
+        or not math.isfinite(exit_spread)
+        or entry_spread < 0
+        or exit_spread < 0
+    ):
         trade.spread_cost_r = None
         trade.commission_r = commission_r
         trade.slippage_r = slippage_r
