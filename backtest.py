@@ -446,6 +446,9 @@ def run_symbol_backtest(
     slippage_r: float,
     allow_5m_refinement: bool = False,
 ) -> tuple[list[Trade], Counter]:
+    # Compatibility parameter retained for callers; this benchmark is strictly
+    # M15-entry-only, so M5 refinement is intentionally never enabled.
+    _ = allow_5m_refinement
     # Historical bars are fixed during a backtest. Immutable tuples allow
     # the strategy engine to safely reuse their candle fingerprints.
     m5_candles = tuple(b.candle for b in m5)
@@ -631,7 +634,7 @@ def summarize(trades: list[Trade], rejection: Counter) -> str:
         "- 4H C3 execution window only",
         "- directionally aligned M15 FVG must pre-exist C3",
         "- FVG touch/reaction must occur during C3",
-        "- optional pre-existing nested M5 refinement (15M baseline; 5M nested refinement when valid)",
+        "- M15-only entry detection; M5 candles are used only to simulate exits",
         "- structural SL = execution FVG candle 3 low/high",
         "- fixed 1:2 target",
         "- London AM + New York AM + London PM entries only",
@@ -648,7 +651,11 @@ def main() -> None:
     parser.add_argument("--end", default=datetime.now(timezone.utc).isoformat())
     parser.add_argument("--commission-r", type=float, default=0.0)
     parser.add_argument("--slippage-r", type=float, default=0.0)
-    parser.add_argument("--no-5m-refinement", action="store_true")
+    parser.add_argument(
+        "--no-5m-refinement",
+        action="store_true",
+        help="Deprecated compatibility flag; this backtest always uses M15-only entries.",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("backtest_crt3c"))
     args = parser.parse_args()
 
@@ -689,7 +696,7 @@ def main() -> None:
 
                 commission_r=args.commission_r,
                 slippage_r=args.slippage_r,
-                allow_5m_refinement=not args.no_5m_refinement,
+                allow_5m_refinement=False,
             )
             all_trades.extend(trades)
             total_rejection.update(rejection)
