@@ -103,7 +103,7 @@ def test_spread_points_are_converted_using_explicit_point_size(tmp_path: Path):
 
     bars = load_csv_bars(path)
 
-    assert bars[0].spread_price == 0.00015
+    assert abs(bars[0].spread_price - 0.00015) < 1e-12
 
 
 def test_summary_does_not_claim_full_net_r_when_closed_trade_cost_is_missing():
