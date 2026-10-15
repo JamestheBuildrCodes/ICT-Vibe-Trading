@@ -336,12 +336,20 @@ def _trade_from_signal(symbol: str, signal: CRT3CSignal, trade_id: str) -> Trade
     )
 
 
-def simulate_exit(trade: Trade, m5: list[Bar]) -> Trade:
-    """Simulate exits from the first M5 bar after entry detection."""
+def simulate_exit(
+    trade: Trade,
+    m5: list[Bar],
+    test_end: Optional[datetime] = None,
+) -> Trade:
+    """Simulate M5 exits without using candles that close after the test window."""
     for bar in m5:
         c = bar.candle
         if c.time < trade.entry_time:
             continue
+        # A bar that closes after test_end contains out-of-window information,
+        # even if the bar opened before the cutoff.
+        if test_end is not None and c.time + timedelta(minutes=M5_MINUTES) > test_end:
+            break
 
         if trade.direction == Direction.LONG.value:
             hit_sl = c.low <= trade.stop_loss
@@ -506,7 +514,7 @@ def run_symbol_backtest(
             active_trade = None
 
         trade = _trade_from_signal(symbol, signal, f"{symbol}-{len(trades)+1:05d}")
-        trade = simulate_exit(trade, m5)
+        trade = simulate_exit(trade, m5, test_end=test_end)
         apply_costs(trade, spread_by_time, commission_r, slippage_r)
 
         trades.append(trade)
